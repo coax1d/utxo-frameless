@@ -9,6 +9,7 @@ use sp_core::{
 	sr25519::{Public, Signature},
 };
 use sp_std::collections::btree_map::BTreeMap;
+use sp_std::collections::btree_set::BTreeSet;
 use sp_std::prelude::*;
 use sp_runtime::{
 	traits::{BlakeTwo256, Hash, SaturatedConversion},
@@ -19,11 +20,21 @@ use sp_runtime::{
 pub type Value = u128;
 pub type DispatchResult = Result<(), sp_runtime::DispatchError>;
 
+/// Return Err of the expression: `return Err($expression);`.
+///
+/// Used as `fail!(expression)`.
+#[macro_export]
+macro_rules! fail {
+	( $y:expr ) => {{
+		return Err($y.into())
+	}};
+}
+
 #[macro_export]
 macro_rules! ensure {
 	( $x:expr, $y:expr $(,)? ) => {{
 		if !$x {
-			$crate::fail!($y);
+			fail!($y);
 		}
 	}};
 }
@@ -90,17 +101,224 @@ pub struct TransactionOutput {
 	pub pubkey: H256,
 }
 
+// How to add weight here for charging a fee.
+/// Execute transaction
+/// Check transaction validity
+/// Update the storage
 pub fn spend(transaction: Transaction) -> DispatchResult {
-    let hash = BlakeTwo256::hash_of(&TransactionOutput{ ..Default::default() });
+    let tx_validity = validate_transaction(&transaction)?;
+    // For tx_pool, Todo: Ask Joshy if this comment is correct.
+    ensure!(tx_validity.requires.is_empty(), "missing inputs");
+    update_storage(&transaction)?;
     Ok(())
 }
 
-pub fn validate_transaction() -> Result<ValidTransaction, &'static str> {
+/// Called by Txpool and Runtime
+/// // Todo: Understand each and everyone of these
+/// Verify inputs and outputs are non-empty
+/// All inputs map to existing unspent && unlocked outputs
+/// Each input is unique.
+/// Each output is unique && is non-zero
+/// Total output value does not exceed total input value
+/// New outputs are unique
+/// Sum of total input and output does not overflow
+/// verify signatures
+/// outputs cannot be exploited
+pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransaction, &'static str> {
+    ensure!(!transaction.inputs.is_empty(), "No inputs");
+    ensure!(!transaction.outputs.is_empty(), "No outputs");
+
+    {
+        // Check for uniqueness once. Afterwards dont need input_set.
+        let input_set: BTreeSet<_> = transaction.inputs.iter().collect();
+        ensure!(input_set.len() == transaction.inputs.len(), "Inputs not unique");
+    }
+    {
+        // Check for uniqueness once. Afterwards dont need output_set.
+        let output_set: BTreeSet<_> = transaction.outputs.iter().collect();
+        ensure!(output_set.len() == transaction.outputs.len(), "Outputs not unique");
+    }
+
+    let mut total_input: Value = 0;
+    let mut total_output: Value = 0;
+    let mut output_index: u64 = 0;
+    let stripped_transaction = get_stripped_transaction(&transaction);
+
+    let mut missing_utxos = Vec::<Vec<u8>>::new();
+	let mut new_utxos = Vec::<Vec<u8>>::new();
+
+    // Verify inputs
+    for input in transaction.inputs.iter() {
+        if let Some(input_utxo_bytes) =
+            sp_io::storage::get(&input.outpoint.encode()) {
+                let input_utxo =
+                    TransactionOutput::decode(&mut &input_utxo_bytes[..])
+                    .expect("If Transaction is stored correctly this should never happen; QED");
+                // Check Signature
+                let sig_verify_result =
+                    sp_io::crypto::sr25519_verify(
+                        &Signature::from_raw(*input.sigscript.as_fixed_bytes()),
+                        &stripped_transaction,
+                        &Public::from_h256(input_utxo.pubkey),
+                    );
+                ensure!(sig_verify_result, "Invalid Signature to spend this Input");
+                total_input =
+                    total_input
+                    .checked_add(input_utxo.value)
+                    .ok_or("input value overflow")?;
+        }
+        else {
+            // Todo: Ask Joshy What does this mean exactly?
+            missing_utxos.push(input.outpoint.clone().as_fixed_bytes().to_vec());
+        }
+    }
+
+    // Verify outputs
+    for output in transaction.outputs.iter() {
+        ensure!(output.value > 0, "Output values must be greater than zero");
+        // ensure no duplicate utxos
+        let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction, output_index));
+        output_index = output_index.checked_add(1).ok_or("output index overflow")?;
+        ensure!(
+            !sp_io::storage::exists(&new_utxo_hash_key.encode()),
+            "output utxo already exists"
+        );
+        total_output = total_output.checked_add(output.value).ok_or("output value overflow")?;
+        new_utxos.push(new_utxo_hash_key.as_fixed_bytes().to_vec());
+    }
+
+    if missing_utxos.is_empty() {
+        ensure!(
+            total_input >= total_output,
+            "total output cannot be greater than total input"
+        );
+    }
+
+
     Ok(ValidTransaction {
-        ..Default::default()
+        requires: missing_utxos,
+        provides: new_utxos,
+        longevity: TransactionLongevity::max_value(),
+        propagate: true,
+        ..Default::default() // Todo: Ask Joshy about this as well as priority?
     })
 }
 
-fn update_storage() -> DispatchResult {
+/// Strip inputs of a transaction of their signature field
+/// Replace signature field with H512 all zeros
+/// @return: scale encoded tx
+fn get_stripped_transaction(transaction: &Transaction) -> Vec<u8> {
+    let mut tx = transaction.clone();
+    for input in tx.inputs.iter_mut() {
+        input.sigscript = H512::zero();
+    }
+    tx.encode()
+}
+
+/// Make changes to storage
+/// A key in storage is a hash of a transaction +
+/// its order in the TransactionOutput Vec in Order to avoid duplications.
+fn update_storage(transaction: &Transaction) -> DispatchResult {
+    /// Remove UTXOS which were spent
+    for input in transaction.inputs.iter() {
+        sp_io::storage::clear(&input.outpoint.encode());
+    }
+
+    // Add new utxos to storage
+    let mut output_index: u64 = 0;
+    for output in transaction.outputs.iter() {
+        let key = BlakeTwo256::hash_of(&(&transaction, output_index));
+        output_index = output_index.checked_add(1).ok_or("output index overflow")?;
+        sp_io::storage::set(&key.encode(), &output.encode());
+    }
+
     Ok(())
+}
+
+mod tests {
+    use super::*;
+
+    #[test]
+	fn validate_no_transaction_outputs_fails() {
+        let inputs = vec![
+            TransactionInput {
+                ..Default::default()
+            },
+            TransactionInput {
+                ..Default::default()
+            }
+        ];
+        let tx = Transaction {
+            inputs,
+            ..Default::default()
+        };
+
+		let res = validate_transaction(&tx).err().unwrap();
+        assert_eq!(res, "No outputs");
+	}
+
+    #[test]
+	fn validate_no_transaction_inputs_fails() {
+        let outputs = vec![
+            TransactionOutput {
+                ..Default::default()
+            },
+            TransactionOutput {
+                ..Default::default()
+            }
+        ];
+        let tx = Transaction {
+            outputs,
+            ..Default::default()
+        };
+
+		let res = validate_transaction(&tx).err().unwrap();
+        assert_eq!(res, "No inputs");
+	}
+
+    #[test]
+    fn validate_outputs_not_unique_fails() {
+        let outputs = vec![
+            TransactionOutput {
+                ..Default::default()
+            },
+            TransactionOutput {
+                ..Default::default()
+            }
+        ];
+        let inputs = vec![
+            TransactionInput {
+                ..Default::default()
+            }
+        ];
+        let tx = Transaction {
+            inputs,
+            outputs,
+        };
+        let res = validate_transaction(&tx).err().unwrap();
+        assert_eq!(res, "Outputs not unique");
+    }
+
+    #[test]
+    fn validate_inputs_not_unique_fails() {
+        let inputs = vec![
+            TransactionInput {
+                ..Default::default()
+            },
+            TransactionInput {
+                ..Default::default()
+            }
+        ];
+        let outputs = vec![
+            TransactionOutput {
+                ..Default::default()
+            }
+        ];
+        let tx = Transaction {
+            inputs,
+            outputs,
+        };
+        let res = validate_transaction(&tx).err().unwrap();
+        assert_eq!(res, "Inputs not unique");
+    }
 }

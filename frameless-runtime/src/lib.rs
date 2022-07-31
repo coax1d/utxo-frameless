@@ -25,7 +25,7 @@ use sp_storage::well_known_keys;
 #[cfg(any(feature = "std", test))]
 use sp_runtime::{BuildStorage, Storage};
 
-use sp_core::{OpaqueMetadata, H256};
+use sp_core::{OpaqueMetadata, H256, H512};
 
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
@@ -413,6 +413,8 @@ mod tests {
 		)
 		.expect("UTXO Pallet storage can be assimilated");
 
+		// println!("{:?}", )
+
 		// Todo Ask Joshy about what exactly this is doing I have a rough idea.
 		let mut ext = sp_io::TestExternalities::from(t);
 		ext.register_extension(KeystoreExt(Arc::new(keystore)));
@@ -430,12 +432,50 @@ mod tests {
 				pubkey: H256::from(alice_pub_key),
 			};
 
+			// Dont need the Transaction Output index since it is initially 0.
 			let key = BlakeTwo256::hash_of(&utxo_output);
 			let mut val_retrieved = sp_io::storage::get(&key.encode()).unwrap();
 			assert_eq!(
 				utxo::TransactionOutput::decode(&mut &val_retrieved[..]).unwrap(),
 				utxo_output
 			);
+		})
+	}
+
+	#[test]
+	fn utxo_frameless_ok_transaction() {
+		new_test_ext().execute_with(|| {
+			let alice_pub_key = sp_io::crypto::sr25519_public_keys(SR25519)[0];
+
+			let mut transaction = utxo::Transaction {
+				inputs: vec![
+					utxo::TransactionInput {
+						outpoint: H256::from(GENESIS_UTXO),
+						sigscript: H512::zero(), // Because is genesis
+					},
+				],
+				outputs: vec![
+					utxo::TransactionOutput {
+						value: 25,
+						pubkey: H256::from(alice_pub_key)
+					}
+				],
+			};
+
+			let signed_transaction =
+				sp_io::crypto::sr25519_sign(
+					SR25519,
+					&alice_pub_key,
+				&transaction.encode()).unwrap();
+			transaction.inputs[0].sigscript = H512::from(signed_transaction);
+			let new_utxo_hash = BlakeTwo256::hash_of(&(&transaction.encode(), 0 as u64));
+			assert_ok!(utxo::spend(transaction));
+			assert!(!sp_io::storage::exists(&H256::from(GENESIS_UTXO).encode()));
+			assert!(sp_io::storage::exists(&new_utxo_hash.encode()));
+			let mut utxo_key =
+					sp_io::storage::get(&new_utxo_hash.encode()).unwrap();
+			// assert_eq!(utxo::TransactionOutput::decode(&mut &utxo_key[..]).unwrap().value, 25);
+			// assert_eq!(utxo::TransactionOutput::decode(&mut &utxo_key[..]).unwrap().pubkey, H256::from(alice_pub_key));
 		})
 	}
 }
