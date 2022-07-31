@@ -3,6 +3,8 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
+mod utxo;
+
 use parity_scale_codec::{Decode, Encode};
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 
@@ -12,7 +14,7 @@ use sp_api::impl_runtime_apis;
 use sp_block_builder::runtime_decl_for_BlockBuilder::BlockBuilder;
 use sp_runtime::{
 	create_runtime_str, generic, impl_opaque_keys,
-	traits::{BlakeTwo256, Block as BlockT, Extrinsic},
+	traits::{BlakeTwo256, Block as BlockT, Extrinsic, Hash},
 	transaction_validity::{TransactionSource, TransactionValidity, ValidTransaction},
 	ApplyExtrinsicResult, BoundToRuntimeAppPublic,
 };
@@ -23,7 +25,7 @@ use sp_storage::well_known_keys;
 #[cfg(any(feature = "std", test))]
 use sp_runtime::{BuildStorage, Storage};
 
-use sp_core::OpaqueMetadata;
+use sp_core::{OpaqueMetadata, H256};
 
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
@@ -105,17 +107,35 @@ pub fn native_version() -> NativeVersion {
 	NativeVersion { runtime_version: VERSION, can_author_with: Default::default() }
 }
 
-/// The type that provides the genesis storage values for a new chain
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize, Default))]
-pub struct GenesisConfig;
+// /// The type that provides the genesis storage values for a new chain
+// #[cfg_attr(feature = "std", derive(Serialize, Deserialize, Default))]
+// pub struct GenesisConfig;
 
-// todo!("Implement Build Genesis for UTXO issuance");
+// Todo Talk to Joshy about how this is working from a UTXO standpoint.
+// How is alice or anyone else able to start spending given storage?
+// Namely how does first item get slotted into storage?
+// (hash of transaction which created UTXO and index of this UTXO in the transaction)?
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub struct GenesisConfig {
+	pub genesis_utxos: Vec<utxo::TransactionOutput>,
+}
+
+#[cfg(feature = "std")]
+impl Default for GenesisConfig {
+	fn default() -> Self {
+		GenesisConfig { genesis_utxos: Default::default() }
+	}
+}
 
 #[cfg(feature = "std")]
 impl BuildStorage for GenesisConfig {
 	fn assimilate_storage(&self, storage: &mut Storage) -> Result<(), String> {
 		// we have nothing to put into storage in genesis, except this:
 		storage.top.insert(well_known_keys::CODE.into(), WASM_BINARY.unwrap().to_vec());
+
+		for utxo in &self.genesis_utxos {
+			storage.top.insert(BlakeTwo256::hash_of(&utxo).encode(), utxo.encode());
+		}
 
 		Ok(())
 	}
@@ -131,6 +151,7 @@ pub type Block = generic::Block<Header, BasicExtrinsic>;
 pub enum Calls {
 	Flipper(u8),
 	Adder(u8),
+	Spend(u8), // Todo Change this to be a u128
 }
 
 // this extrinsic type does nothing other than fulfill the compiler.
@@ -163,7 +184,7 @@ impl_runtime_apis! {
 		}
 
 		// state root check
-		todo!("How to do a state_root check??");
+		// todo!("How to do a state_root check??");
 
 		fn execute_block(block: Block) {
 			info!(target: "frameless", "🖼️ Entering execute_block. block: {:?}", block);
@@ -171,7 +192,7 @@ impl_runtime_apis! {
 
 			for extrinsic in block.extrinsics {
 				Self::apply_extrinsic(extrinsic);
-				todo!();
+				// todo!();
 			}
 
 			Self::finalize_block();
@@ -189,7 +210,7 @@ impl_runtime_apis! {
 			info!(target: "frameless", "🖼️ Entering apply_extrinsic: {:?}", extrinsic);
 
 			let call = extrinsic.0;
-			todo!("Add the actual extrinsic here(which is just sending)..");
+			// todo!("Add the actual extrinsic here(which is just sending)..");
 
 			match call {
 				Calls::Flipper(_) => {
@@ -215,6 +236,9 @@ impl_runtime_apis! {
 						sp_io::storage::set(&ADDER_KEY, &0.encode());
 						info!(target: "frameless", "Storage Initialized FOR ADDER: 0");
 					}
+				},
+				Calls::Spend(tx) => {
+					// Todo! spend the stuff
 				},
 			}
 			// we don't do anything here, but we probably should...
@@ -262,7 +286,7 @@ impl_runtime_apis! {
 			info!(target: "frameless", "🖼️ Entering validate_transaction. source: {:?}, tx: {:?}, block hash: {:?}", source, tx, block_hash);
 
 			// we don't know how to validate this -- It should be fine??
-			todo!("Implement validation of a UTXO transaction here.. I think.");
+			// todo!("Implement validation of a UTXO transaction here.. I think.");
 			let data = tx.0;
 			Ok(ValidTransaction { provides: vec![data.encode()], ..Default::default() })
 		}
@@ -345,4 +369,67 @@ impl_runtime_apis! {
 		}
 	}
 
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use sp_runtime::{testing::Header, traits::IdentityLookup, Perbill};
+	use sp_core::testing::SR25519;
+	use sp_keystore::testing::KeyStore;
+	use sp_keystore::{KeystoreExt, SyncCryptoStore};
+	use hex_literal::hex;
+
+	use std::sync::Arc;
+
+	const ALICE_PHRASE: &str = "news slush supreme milk chapter athlete soap sausage put clutch what kitten";
+	// other random account generated with subkey
+	const KARL_PHRASE: &str = "monitor exhibit resource stumble subject nut valid furnace obscure misery satoshi assume";
+	const GENESIS_UTXO: [u8; 32] = hex!("79eabcbd5ef6e958c6a7851b36da07691c19bda1835a08f875aa286911800999");
+
+	// This function basically just builds a genesis storage key/value store according to our desired mockup.
+	// We start each test by giving Alice 100 utxo to start with.
+	fn new_test_ext() -> sp_io::TestExternalities {
+
+		let keystore = KeyStore::new(); // a key storage to store new key pairs during testing
+		let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+
+		let mut t = GenesisConfig::default()
+			.build_storage()
+			.expect("Frameless system builds valid default genesis config");
+
+		BuildStorage::assimilate_storage(
+			&super::GenesisConfig {
+				genesis_utxos: vec![
+					utxo::TransactionOutput {
+						value: 100,
+						pubkey: H256::from(alice_pub_key),
+					}
+				],
+				..Default::default()
+			},
+			&mut t
+		)
+		.expect("UTXO Pallet storage can be assimilated");
+
+		// Todo Ask Joshy about what exactly this is doing I have a rough idea.
+		let mut ext = sp_io::TestExternalities::from(t);
+		ext.register_extension(KeystoreExt(Arc::new(keystore)));
+		// Todo Ask Joshy is this necessary? How to do in frameless?
+		// ext.execute_with(|| System::set_block_number(1));
+		ext
+	}
+
+	#[test]
+	fn first_utxo_frameless_test() {
+		new_test_ext().execute_with(|| {
+			let alice_pub_key = sp_io::crypto::sr25519_public_keys(SR25519)[0];
+			let key = BlakeTwo256::hash_of(&utxo::TransactionOutput {
+				value: 100,
+				pubkey: H256::from(alice_pub_key),
+			});
+			assert!(sp_io::storage::exists(&key.encode()));
+		})
+	}
 }
