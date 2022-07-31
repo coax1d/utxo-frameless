@@ -422,14 +422,20 @@ mod tests {
 	}
 
 	#[test]
-	fn first_utxo_frameless_test() {
+	fn utxo_frameless_genesis_test() {
 		new_test_ext().execute_with(|| {
 			let alice_pub_key = sp_io::crypto::sr25519_public_keys(SR25519)[0];
-			let key = BlakeTwo256::hash_of(&utxo::TransactionOutput {
+			let mut utxo_output = utxo::TransactionOutput {
 				value: 100,
 				pubkey: H256::from(alice_pub_key),
-			});
-			assert!(sp_io::storage::exists(&key.encode()));
+			};
+
+			let key = BlakeTwo256::hash_of(&utxo_output);
+			let mut val_retrieved = sp_io::storage::get(&key.encode()).unwrap();
+			assert_eq!(
+				utxo::TransactionOutput::decode(&mut &val_retrieved[..]).unwrap(),
+				utxo_output
+			);
 		})
 	}
 }
