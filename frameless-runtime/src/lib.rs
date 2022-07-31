@@ -123,7 +123,10 @@ pub struct GenesisConfig {
 #[cfg(feature = "std")]
 impl Default for GenesisConfig {
 	fn default() -> Self {
-		GenesisConfig { genesis_utxos: Default::default() }
+		GenesisConfig { genesis_utxos: vec![utxo::TransactionOutput {
+				value: 100,
+				pubkey: H256::from(hex_literal::hex!("d2bf4b844dfefd6772a8843e669f943408966a977e3ae2af1dd78e0f55f4df67")),
+		}]}
 	}
 }
 
@@ -185,9 +188,12 @@ impl_runtime_apis! {
 
 		// state root check
 		// todo!("How to do a state_root check??");
+		
 
 		fn execute_block(block: Block) {
 			info!(target: "frameless", "🖼️ Entering execute_block. block: {:?}", block);
+			//header.state_root = sp_core::H256::decode(&mut &raw_state_root[..]).unwrap();
+			//check equal to block.header.state_root
 			Self::initialize_block(&block.header);
 
 			for extrinsic in block.extrinsics {
@@ -400,15 +406,7 @@ mod tests {
 			.expect("Frameless system builds valid default genesis config");
 
 		BuildStorage::assimilate_storage(
-			&super::GenesisConfig {
-				genesis_utxos: vec![
-					utxo::TransactionOutput {
-						value: 100,
-						pubkey: H256::from(alice_pub_key),
-					}
-				],
-				..Default::default()
-			},
+			&super::GenesisConfig::default(),
 			&mut t
 		)
 		.expect("UTXO Pallet storage can be assimilated");
@@ -435,6 +433,7 @@ mod tests {
 			// Dont need the Transaction Output index since it is initially 0.
 			let key = BlakeTwo256::hash_of(&utxo_output);
 			let mut val_retrieved = sp_io::storage::get(&key.encode()).unwrap();
+			println!("Hey Joshy {:?}, alice_pub_key: {:?}", key, alice_pub_key);
 			assert_eq!(
 				utxo::TransactionOutput::decode(&mut &val_retrieved[..]).unwrap(),
 				utxo_output
@@ -451,7 +450,7 @@ mod tests {
 				inputs: vec![
 					utxo::TransactionInput {
 						outpoint: H256::from(GENESIS_UTXO),
-						sigscript: H512::zero(), // Because is genesis
+						sigscript: H512::zero(),
 					},
 				],
 				outputs: vec![
@@ -467,13 +466,16 @@ mod tests {
 					SR25519,
 					&alice_pub_key,
 				&transaction.encode()).unwrap();
+
 			transaction.inputs[0].sigscript = H512::from(signed_transaction);
-			let new_utxo_hash = BlakeTwo256::hash_of(&(&transaction.encode(), 0 as u64));
+
+			let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), 0 as u64));
+			println!("Unit Test new_utxo_hash_key::{:?}", new_utxo_hash_key);
 			assert_ok!(utxo::spend(transaction));
 			assert!(!sp_io::storage::exists(&H256::from(GENESIS_UTXO).encode()));
-			assert!(sp_io::storage::exists(&new_utxo_hash.encode()));
-			let mut utxo_key =
-					sp_io::storage::get(&new_utxo_hash.encode()).unwrap();
+			assert!(sp_io::storage::exists(&new_utxo_hash_key.encode()));
+			// let mut utxo_key =
+			// 		sp_io::storage::get(&new_utxo_hash.encode()).unwrap();
 			// assert_eq!(utxo::TransactionOutput::decode(&mut &utxo_key[..]).unwrap().value, 25);
 			// assert_eq!(utxo::TransactionOutput::decode(&mut &utxo_key[..]).unwrap().pubkey, H256::from(alice_pub_key));
 		})

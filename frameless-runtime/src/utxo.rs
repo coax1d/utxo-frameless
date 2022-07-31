@@ -108,7 +108,7 @@ pub struct TransactionOutput {
 pub fn spend(transaction: Transaction) -> DispatchResult {
     let tx_validity = validate_transaction(&transaction)?;
     // For tx_pool, Todo: Ask Joshy if this comment is correct.
-    ensure!(tx_validity.requires.is_empty(), "missing inputs");
+    // ensure!(tx_validity.requires.is_empty(), "missing inputs");
     update_storage(&transaction)?;
     Ok(())
 }
@@ -168,8 +168,8 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
                     .ok_or("input value overflow")?;
         }
         else {
-            // Todo: Ask Joshy What does this mean exactly?
-            missing_utxos.push(input.outpoint.clone().as_fixed_bytes().to_vec());
+            // option is to fail and return not valid.
+            return Err("Cant Process Transaction yet");
         }
     }
 
@@ -178,6 +178,9 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
         ensure!(output.value > 0, "Output values must be greater than zero");
         // ensure no duplicate utxos
         let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction, output_index));
+        sp_std::if_std! {
+            println!("Spend function new_utxo_hash_key::{:?}", new_utxo_hash_key);
+        }
         output_index = output_index.checked_add(1).ok_or("output index overflow")?;
         ensure!(
             !sp_io::storage::exists(&new_utxo_hash_key.encode()),
@@ -187,16 +190,7 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
         new_utxos.push(new_utxo_hash_key.as_fixed_bytes().to_vec());
     }
 
-    if missing_utxos.is_empty() {
-        ensure!(
-            total_input >= total_output,
-            "total output cannot be greater than total input"
-        );
-    }
-
-
     Ok(ValidTransaction {
-        requires: missing_utxos,
         provides: new_utxos,
         longevity: TransactionLongevity::max_value(),
         propagate: true,
@@ -228,6 +222,9 @@ fn update_storage(transaction: &Transaction) -> DispatchResult {
     let mut output_index: u64 = 0;
     for output in transaction.outputs.iter() {
         let key = BlakeTwo256::hash_of(&(&transaction, output_index));
+        sp_std::if_std! {
+            println!("update storage hash key::{:?}", &key);
+        }
         output_index = output_index.checked_add(1).ok_or("output index overflow")?;
         sp_io::storage::set(&key.encode(), &output.encode());
     }
