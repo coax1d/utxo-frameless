@@ -107,7 +107,6 @@ pub struct TransactionOutput {
 /// Update the storage
 pub fn spend(transaction: Transaction) -> DispatchResult {
     let tx_validity = validate_transaction(&transaction)?;
-    // For tx_pool, Todo: Ask Joshy if this comment is correct.
     // ensure!(tx_validity.requires.is_empty(), "missing inputs");
     update_storage(&transaction)?;
     Ok(())
@@ -144,9 +143,6 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
     let mut output_index: u64 = 0;
     let stripped_transaction = get_stripped_transaction(&transaction);
 
-    let mut missing_utxos = Vec::<Vec<u8>>::new();
-	let mut new_utxos = Vec::<Vec<u8>>::new();
-
     // Verify inputs
     for input in transaction.inputs.iter() {
         if let Some(input_utxo_bytes) =
@@ -168,7 +164,7 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
                     .ok_or("input value overflow")?;
         }
         else {
-            // option is to fail and return not valid.
+            // To keep it simple we want to fail here.
             return Err("Cant Process Transaction yet");
         }
     }
@@ -177,24 +173,19 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
     for output in transaction.outputs.iter() {
         ensure!(output.value > 0, "Output values must be greater than zero");
         // ensure no duplicate utxos
-        let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction, output_index));
-        sp_std::if_std! {
-            println!("Spend function new_utxo_hash_key::{:?}", new_utxo_hash_key);
-        }
+        let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), output_index));
         output_index = output_index.checked_add(1).ok_or("output index overflow")?;
         ensure!(
             !sp_io::storage::exists(&new_utxo_hash_key.encode()),
             "output utxo already exists"
         );
         total_output = total_output.checked_add(output.value).ok_or("output value overflow")?;
-        new_utxos.push(new_utxo_hash_key.as_fixed_bytes().to_vec());
     }
 
     Ok(ValidTransaction {
-        provides: new_utxos,
         longevity: TransactionLongevity::max_value(),
         propagate: true,
-        ..Default::default() // Todo: Ask Joshy about this as well as priority?
+        ..Default::default()
     })
 }
 
@@ -221,10 +212,7 @@ fn update_storage(transaction: &Transaction) -> DispatchResult {
     // Add new utxos to storage
     let mut output_index: u64 = 0;
     for output in transaction.outputs.iter() {
-        let key = BlakeTwo256::hash_of(&(&transaction, output_index));
-        sp_std::if_std! {
-            println!("update storage hash key::{:?}", &key);
-        }
+        let key = BlakeTwo256::hash_of(&(&transaction.encode(), output_index));
         output_index = output_index.checked_add(1).ok_or("output index overflow")?;
         sp_io::storage::set(&key.encode(), &output.encode());
     }
