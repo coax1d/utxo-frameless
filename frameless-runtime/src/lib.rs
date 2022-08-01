@@ -112,10 +112,6 @@ pub fn native_version() -> NativeVersion {
 	NativeVersion { runtime_version: VERSION, can_author_with: Default::default() }
 }
 
-// Todo Talk to Joshy about how this is working from a UTXO standpoint.
-// How is alice or anyone else able to start spending given storage?
-// Namely how does first item get slotted into storage?
-// (hash of transaction which created UTXO and index of this UTXO in the transaction)?
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 pub struct GenesisConfig {
 	pub genesis_utxos: Vec<utxo::TransactionOutput>,
@@ -124,9 +120,14 @@ pub struct GenesisConfig {
 #[cfg(feature = "std")]
 impl Default for GenesisConfig {
 	fn default() -> Self {
+		use hex_literal::hex;
+
+		const ALICE_PUB_KEY_BYTES: [u8; 32] =
+			hex!("d2bf4b844dfefd6772a8843e669f943408966a977e3ae2af1dd78e0f55f4df67");
+
 		GenesisConfig { genesis_utxos: vec![utxo::TransactionOutput {
 				value: 100,
-				pubkey: H256::from(hex_literal::hex!("d2bf4b844dfefd6772a8843e669f943408966a977e3ae2af1dd78e0f55f4df67")),
+				pubkey: H256::from(ALICE_PUB_KEY_BYTES),
 		}]}
 	}
 }
@@ -134,7 +135,6 @@ impl Default for GenesisConfig {
 #[cfg(feature = "std")]
 impl BuildStorage for GenesisConfig {
 	fn assimilate_storage(&self, storage: &mut Storage) -> Result<(), String> {
-		// we have nothing to put into storage in genesis, except this:
 		storage.top.insert(well_known_keys::CODE.into(), WASM_BINARY.unwrap().to_vec());
 
 		for utxo in &self.genesis_utxos {
@@ -170,7 +170,6 @@ impl Extrinsic for BasicExtrinsic {
 	}
 }
 
-// 686561646572 raw storage key
 pub const HEADER_KEY: [u8; 6] = *b"header";
 
 /// The main struct in this module. In frame this comes from `construct_runtime!`

@@ -1,5 +1,5 @@
 [package]
-name = "node-template"
+name = "utxo-node"
 version = "4.0.0-dev"
 description = "A fresh FRAME-based Substrate node, ready for hacking."
 authors = ["Substrate DevHub <https://github.com/substrate-developer-hub>"]
@@ -14,7 +14,7 @@ build = "build.rs"
 targets = ["x86_64-unknown-linux-gnu"]
 
 [[bin]]
-name = "node-template"
+name = "utxo-node"
 
 [dependencies]
 clap = { version = "3.1.6", features = ["derive"] }
@@ -60,7 +60,7 @@ frame-benchmarking = { version = "4.0.0-dev", git = "https://github.com/parityte
 frame-benchmarking-cli = { version = "4.0.0-dev", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.20" }
 
 # Local Dependencies
-node-template-runtime = { package = "frameless-runtime", path = "../frameless-runtime" }
+utxo-frameless-runtime = { package = "frameless-runtime", path = "../frameless-runtime" }
 
 # CLI-specific dependencies
 #try-runtime-cli = { version = "0.10.0-dev", optional = true, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.20" }

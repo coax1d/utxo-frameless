@@ -144,22 +144,22 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
 
     // Verify inputs
     for input in transaction.inputs.iter() {
-        if let Some(input_utxo_bytes) =
+        if let Some(utxo_bytes) =
             sp_io::storage::get(&input.outpoint.encode()) {
-                let input_utxo =
-                    TransactionOutput::decode(&mut &input_utxo_bytes[..])
+                let utxo =
+                    TransactionOutput::decode(&mut &utxo_bytes[..])
                     .expect("If Transaction is stored correctly this should never happen; QED");
                 // Check Signature
                 let sig_verify_result =
                     sp_io::crypto::sr25519_verify(
                         &Signature::from_raw(*input.sigscript.as_fixed_bytes()),
                         &stripped_transaction,
-                        &Public::from_h256(input_utxo.pubkey),
+                        &Public::from_h256(utxo.pubkey),
                     );
                 ensure!(sig_verify_result, "Invalid Signature to spend this Input");
                 total_input =
                     total_input
-                    .checked_add(input_utxo.value)
+                    .checked_add(utxo.value)
                     .ok_or("input value overflow")?;
         }
         else {

@@ -1,4 +1,4 @@
-use node_template_runtime::GenesisConfig as FramelessGenesisConfig;
+use utxo_frameless_runtime::GenesisConfig as FramelessGenesisConfig;
 use sc_service::ChainType;
 use sp_core::{Pair, Public, sr25519, H256, ByteArray};
 use hex_literal::hex;
@@ -76,8 +76,8 @@ fn testnet_genesis(endowed_utxos: Vec<[u8; 32]>) -> FramelessGenesisConfig {
 		  genesis_utxos: endowed_utxos
 			.iter()
 			.map(|x|
-				node_template_runtime::utxo::TransactionOutput {
-					value: 100 as node_template_runtime::utxo::Value,
+				utxo_frameless_runtime::utxo::TransactionOutput {
+					value: 100 as utxo_frameless_runtime::utxo::Value,
 					pubkey: H256::from_slice(x),
 				}
 			)
