@@ -164,7 +164,7 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
         }
         else {
             // To keep it simple we want to fail here.
-            return Err("Cant Process Transaction yet");
+            return Err("No existing UTXO for this specified outpoint, Invalid Input");
         }
     }
 

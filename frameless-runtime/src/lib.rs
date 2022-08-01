@@ -392,7 +392,8 @@ mod tests {
 	#[test]
 	fn utxo_frameless_genesis_test() {
 		new_test_ext().execute_with(|| {
-			let alice_pub_key = sp_io::crypto::sr25519_public_keys(SR25519)[0];
+			let keystore = KeyStore::new();
+			let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
 			let mut utxo_output = utxo::TransactionOutput {
 				value: 100,
 				pubkey: H256::from(alice_pub_key),
@@ -409,7 +410,8 @@ mod tests {
 	#[test]
 	fn utxo_frameless_spend_transaction() {
 		new_test_ext().execute_with(|| {
-			let alice_pub_key = sp_io::crypto::sr25519_public_keys(SR25519)[0];
+			let keystore = KeyStore::new();
+			let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
 
 			let mut transaction = utxo::Transaction {
 				inputs: vec![
@@ -426,13 +428,11 @@ mod tests {
 				],
 			};
 
-			let signed_transaction =
-				sp_io::crypto::sr25519_sign(
-					SR25519,
-					&alice_pub_key,
-				&transaction.encode()).unwrap();
+			let signature =
+				sp_io::crypto::sr25519_sign(SR25519, &alice_pub_key, &transaction.encode())
+				.unwrap();
 
-			transaction.inputs[0].sigscript = H512::from(signed_transaction);
+			transaction.inputs[0].sigscript = H512::from(signature);
 			println!("Bytes Scale Encoded:: {:x?}", &transaction.encode());
 			let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), 0 as u64));
 			assert_ok!(utxo::spend(transaction));
@@ -442,6 +442,36 @@ mod tests {
 					sp_io::storage::get(&new_utxo_hash_key.encode()).unwrap();
 			assert_eq!(utxo::TransactionOutput::decode(&mut &new_utxo[..]).unwrap().value, 25);
 			assert_eq!(utxo::TransactionOutput::decode(&mut &new_utxo[..]).unwrap().pubkey, H256::from(alice_pub_key));
+		})
+	}
+
+	#[test]
+	fn utxo_frameless_create_outputs_from_no_existing_utxo_fails() {
+		new_test_ext().execute_with(|| {
+			let keystore = KeyStore::new();
+			let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+
+			let mut transaction = utxo::Transaction {
+				inputs: vec![ utxo::TransactionInput {
+					outpoint: H256::zero(),
+					sigscript: H512::zero(),
+				}],
+				outputs: vec![ utxo::TransactionOutput {
+					value: 100,
+					pubkey: H256::from(alice_pub_key)
+				}],
+			};
+
+			let signature =
+				sp_io::crypto::sr25519_sign(SR25519, &alice_pub_key, &transaction.encode())
+				.unwrap();
+			transaction.inputs[0].sigscript = H512::from(signature);
+			let spend_result = utxo::spend(transaction).err().unwrap();
+			assert_eq!(
+				spend_result,
+				sp_runtime::DispatchError::Other(
+					"No existing UTXO for this specified outpoint, Invalid Input")
+			);
 		})
 	}
 }
