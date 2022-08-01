@@ -66,7 +66,7 @@ macro_rules! assert_ok {
 }
 
 /// Single transaction to be dispatched - Extrinsic
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize, parity_util_mem::MallocSizeOf))]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Default, Clone, Encode, Decode, Hash, Debug, TypeInfo)]
 pub struct Transaction {
 	/// UTXOs to be used as inputs for current transaction
@@ -77,7 +77,7 @@ pub struct Transaction {
 }
 
 /// Single transaction input that refers to one UTXO
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize, parity_util_mem::MallocSizeOf))]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Default, Clone, Encode, Decode, Hash, Debug, MaxEncodedLen, TypeInfo)]
 pub struct TransactionInput {
 	/// Reference to an UTXO to be spent
@@ -89,7 +89,7 @@ pub struct TransactionInput {
 }
 
 /// Single transaction output to create upon transaction dispatch
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize, parity_util_mem::MallocSizeOf))]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Default, Clone, Encode, Decode, Hash, Debug, MaxEncodedLen, TypeInfo)]
 pub struct TransactionOutput {
 	/// Value associated with this output
@@ -107,7 +107,6 @@ pub struct TransactionOutput {
 /// Update the storage
 pub fn spend(transaction: Transaction) -> DispatchResult {
     let tx_validity = validate_transaction(&transaction)?;
-    // ensure!(tx_validity.requires.is_empty(), "missing inputs");
     update_storage(&transaction)?;
     Ok(())
 }

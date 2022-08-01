@@ -3,8 +3,7 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
-mod utxo;
-
+pub mod utxo;
 use parity_scale_codec::{Decode, Encode};
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 
@@ -15,7 +14,13 @@ use sp_block_builder::runtime_decl_for_BlockBuilder::BlockBuilder;
 use sp_runtime::{
 	create_runtime_str, generic, impl_opaque_keys,
 	traits::{BlakeTwo256, Block as BlockT, Extrinsic, Hash},
-	transaction_validity::{TransactionSource, TransactionValidity, ValidTransaction},
+	transaction_validity::{
+		TransactionSource,
+		TransactionValidity,
+		ValidTransaction,
+		InvalidTransaction,
+		TransactionValidityError
+	},
 	ApplyExtrinsicResult, BoundToRuntimeAppPublic,
 };
 use sp_std::prelude::*;
@@ -107,10 +112,6 @@ pub fn native_version() -> NativeVersion {
 	NativeVersion { runtime_version: VERSION, can_author_with: Default::default() }
 }
 
-// /// The type that provides the genesis storage values for a new chain
-// #[cfg_attr(feature = "std", derive(Serialize, Deserialize, Default))]
-// pub struct GenesisConfig;
-
 // Todo Talk to Joshy about how this is working from a UTXO standpoint.
 // How is alice or anyone else able to start spending given storage?
 // Namely how does first item get slotted into storage?
@@ -151,10 +152,8 @@ pub type Block = generic::Block<Header, BasicExtrinsic>;
 
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize, parity_util_mem::MallocSizeOf))]
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
-pub enum Calls {
-	Flipper(u8),
-	Adder(u8),
-	Spend(u8), // Todo Change this to be a u128
+pub struct Calls {
+	tx: utxo::Transaction,
 }
 
 // this extrinsic type does nothing other than fulfill the compiler.
@@ -173,8 +172,6 @@ impl Extrinsic for BasicExtrinsic {
 
 // 686561646572 raw storage key
 pub const HEADER_KEY: [u8; 6] = *b"header";
-pub const FLIPPER_KEY: [u8; 6] = *b"flipit";
-pub const ADDER_KEY: [u8; 5] = *b"addme";
 
 /// The main struct in this module. In frame this comes from `construct_runtime!`
 pub struct Runtime;
@@ -197,7 +194,6 @@ impl_runtime_apis! {
 
 			for extrinsic in block.extrinsics {
 				Self::apply_extrinsic(extrinsic);
-				// todo!();
 			}
 
 			Self::finalize_block();
@@ -215,40 +211,16 @@ impl_runtime_apis! {
 			info!(target: "frameless", "🖼️ Entering apply_extrinsic: {:?}", extrinsic);
 
 			let call = extrinsic.0;
-			// todo!("Add the actual extrinsic here(which is just sending)..");
-
-			match call {
-				Calls::Flipper(_) => {
-					if let Some(vec_bytes) = sp_io::storage::get(&FLIPPER_KEY) {
-						let val = bool::decode(&mut &vec_bytes[..]).unwrap();
-						info!(target: "frameless", "What did I READ??::: {:?}", val);
-						let new_val = !val;
-						sp_io::storage::set(&FLIPPER_KEY, &new_val.encode());
-					}
-					else {
-						sp_io::storage::set(&FLIPPER_KEY, &false.encode());
-						info!(target: "frameless", "Storage Initialized: False");
-					}
+			let transaction = call.tx;
+			// Call spend
+			match utxo::spend(transaction) {
+				Err(e) => {
+					Err(TransactionValidityError::Invalid(InvalidTransaction::Custom(1)))
+				},
+				Ok(_) => {
+					Ok(Ok(()))
 				}
-				Calls::Adder(add_val) => {
-					if let Some(vec_bytes) = sp_io::storage::get(&ADDER_KEY) {
-						let val = u8::decode(&mut &vec_bytes[..]).unwrap();
-						info!(target: "frameless", "READ VAL FOR STORAGE FUCK RAMSEY: {:?}", &val);
-						let new_val = val + add_val;
-						sp_io::storage::set(&ADDER_KEY, &new_val.encode());
-					}
-					else {
-						sp_io::storage::set(&ADDER_KEY, &0.encode());
-						info!(target: "frameless", "Storage Initialized FOR ADDER: 0");
-					}
-				},
-				Calls::Spend(tx) => {
-					// Todo! spend the stuff
-				},
 			}
-			// we don't do anything here, but we probably should...
-
-			Ok(Ok(()))
 		}
 
 		fn finalize_block() -> <Block as BlockT>::Header {
@@ -462,14 +434,16 @@ mod tests {
 				&transaction.encode()).unwrap();
 
 			transaction.inputs[0].sigscript = H512::from(signed_transaction);
+			println!("Bytes Scale Encoded:: {:x?}", &transaction.encode());
 			let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), 0 as u64));
 			assert_ok!(utxo::spend(transaction));
 			assert!(!sp_io::storage::exists(&H256::from(GENESIS_UTXO).encode()));
 			assert!(sp_io::storage::exists(&new_utxo_hash_key.encode()));
-			let mut utxo_key =
+			let mut new_utxo =
 					sp_io::storage::get(&new_utxo_hash_key.encode()).unwrap();
-			assert_eq!(utxo::TransactionOutput::decode(&mut &utxo_key[..]).unwrap().value, 25);
-			assert_eq!(utxo::TransactionOutput::decode(&mut &utxo_key[..]).unwrap().pubkey, H256::from(alice_pub_key));
+			assert_eq!(utxo::TransactionOutput::decode(&mut &new_utxo[..]).unwrap().value, 25);
+			assert_eq!(utxo::TransactionOutput::decode(&mut &new_utxo[..]).unwrap().pubkey, H256::from(alice_pub_key));
 		})
 	}
 }
+// 479eabcbd5ef6e958c6a7851b36da7691c19bda1835a8f875aa28691180999ec4b9b126f8c6b8edcb39d03872d1834ea7602b15fffad0f467d5b0d2c9bf76ff4bc7e09df6828f5b8f42286f3bed67d0b7f4e47973ed3f67829feb7e42d82419000000000000000d2bf4b844dfefd6772a8843e669f94348966a977e3ae2af1dd78ef55f4df67
