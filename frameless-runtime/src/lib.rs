@@ -225,7 +225,7 @@ impl_runtime_apis! {
 			let raw_state_root = &sp_io::storage::root(sp_storage::StateVersion::default())[..];
 
 			header.state_root = sp_core::H256::decode(&mut &raw_state_root[..]).unwrap();
-			//Log header here like in initialize block
+			info!(target: "frameless", "🖼️ new block header on finalization: {:?}", header);
 			header
 		}
 
@@ -378,10 +378,8 @@ mod tests {
 		)
 		.expect("UTXO Pallet storage can be assimilated");
 
-		// Todo Ask Joshy about what exactly this is doing I have a rough idea.
 		let mut ext = sp_io::TestExternalities::from(t);
 		ext.register_extension(KeystoreExt(Arc::new(keystore)));
-		// Todo Ask Joshy is this necessary? How to do in frameless?
 		ext
 	}
 
@@ -432,8 +430,6 @@ mod tests {
 
 			let extrinsic = BasicExtrinsic(transaction.clone());
 			println!("Extrinsic Scale encoded hex::{}", HexDisplay::from(&extrinsic.encode()));
-			// let call = BasicExtrinsic(Calls { tx: transaction.clone() });
-			// println!("Call Scale encoded hex::{}", HexDisplay::from(&call.encode()));
 
 			let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), 0 as u64));
 			println!("New_utxo_key::{}", HexDisplay::from(&new_utxo_hash_key.encode()));
@@ -474,6 +470,43 @@ mod tests {
 				spend_result,
 				sp_runtime::DispatchError::Other(
 					"No existing UTXO for this specified outpoint, Invalid Input")
+			);
+		})
+	}
+
+	#[test]
+	fn utxo_frameless_double_spend_same_utxo() {
+		new_test_ext().execute_with(|| {
+			let keystore = KeyStore::new();
+			let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+
+			let mut transaction = utxo::Transaction {
+				inputs: vec![
+					utxo::TransactionInput {
+						outpoint: H256::from(GENESIS_UTXO),
+						sigscript: H512::zero()
+				},
+					utxo::TransactionInput {
+						outpoint: H256::from(GENESIS_UTXO),
+						sigscript: H512::zero()
+					}
+				],
+				outputs: vec![
+					utxo::TransactionOutput {
+						value: 25,
+						pubkey: H256::from(alice_pub_key),
+				}],
+			};
+
+			let signature =
+				sp_io::crypto::sr25519_sign(SR25519, &alice_pub_key, &transaction.encode())
+				.unwrap();
+			for input in transaction.inputs.iter_mut() {
+				input.sigscript = H512::from(signature.clone());
+			}
+			let spend_result = utxo::spend(transaction).err().unwrap();
+			assert_eq!(spend_result,
+				sp_runtime::DispatchError::Other("Inputs not unique")
 			);
 		})
 	}

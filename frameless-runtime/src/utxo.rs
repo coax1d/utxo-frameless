@@ -115,7 +115,6 @@ pub fn spend(transaction: Transaction) -> DispatchResult {
 }
 
 /// Called by Txpool and Runtime
-/// // Todo: Understand each and everyone of these
 /// Verify inputs and outputs are non-empty
 /// All inputs map to existing unspent && unlocked outputs
 /// Each input is unique.
