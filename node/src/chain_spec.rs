@@ -39,7 +39,7 @@ pub fn development_config() -> Result<ChainSpec, String> {
 		|| testnet_genesis(
 			vec![
 				// Alice
-				hex!("79eabcbd5ef6e958c6a7851b36da07691c19bda1835a08f875aa286911800999"),
+				hex!("d2bf4b844dfefd6772a8843e669f943408966a977e3ae2af1dd78e0f55f4df67"),
 			],
 		),
 		vec![],
@@ -59,7 +59,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 		|| testnet_genesis(
 			vec![
 				// Alice
-				hex!("79eabcbd5ef6e958c6a7851b36da07691c19bda1835a08f875aa286911800999"),
+				hex!("d2bf4b844dfefd6772a8843e669f943408966a977e3ae2af1dd78e0f55f4df67"),
 			],
 		),
 		vec![],

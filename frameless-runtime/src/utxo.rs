@@ -16,6 +16,8 @@ use sp_runtime::{
 	transaction_validity::{TransactionLongevity, ValidTransaction},
 };
 
+use log::info;
+
 // Value to represent a fungible value of a UTXO
 pub type Value = u128;
 pub type DispatchResult = Result<(), sp_runtime::DispatchError>;
@@ -106,6 +108,7 @@ pub struct TransactionOutput {
 /// Check transaction validity
 /// Update the storage
 pub fn spend(transaction: Transaction) -> DispatchResult {
+    info!(target: "frameless", "🖼️ Got into Spend");
     let tx_validity = validate_transaction(&transaction)?;
     update_storage(&transaction)?;
     Ok(())
@@ -123,6 +126,7 @@ pub fn spend(transaction: Transaction) -> DispatchResult {
 /// verify signatures
 /// outputs cannot be exploited
 pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransaction, &'static str> {
+    info!(target: "frameless", "🖼️ Got into validate_transaction");
     ensure!(!transaction.inputs.is_empty(), "No inputs");
     ensure!(!transaction.outputs.is_empty(), "No outputs");
 
@@ -139,16 +143,15 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
 
     let mut total_input: Value = 0;
     let mut total_output: Value = 0;
-    let mut output_index: u64 = 0;
     let stripped_transaction = get_stripped_transaction(&transaction);
 
-    // Verify inputs
     for input in transaction.inputs.iter() {
-        if let Some(utxo_bytes) =
-            sp_io::storage::get(&input.outpoint.encode()) {
+        match sp_io::storage::get(&input.outpoint.encode()) {
+            Some(utxo_bytes) => {
+                info!(target: "frameless", "🖼️ Got into validate_transaction::Some");
                 let utxo =
                     TransactionOutput::decode(&mut &utxo_bytes[..])
-                    .expect("If Transaction is stored correctly this should never happen; QED");
+                    .expect("Should never happen; QED");
                 // Check Signature
                 let sig_verify_result =
                     sp_io::crypto::sr25519_verify(
@@ -161,15 +164,21 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
                     total_input
                     .checked_add(utxo.value)
                     .ok_or("input value overflow")?;
-        }
-        else {
-            // To keep it simple we want to fail here.
-            return Err("No existing UTXO for this specified outpoint, Invalid Input");
+            },
+            None => {
+                info!(target: "frameless", "🖼️ Got into validate_transaction::None");
+                // To keep it simple we want to fail here. No handling for races.
+                return Err("No existing UTXO for this specified outpoint, Invalid Input");
+            }
         }
     }
 
+    // Need to keep track of the output_index in order to avoid hashing
+    // collisions in storage.
+    let mut output_index: u64 = 0;
     // Verify outputs
     for output in transaction.outputs.iter() {
+        info!(target: "frameless", "🖼️ Got into validate_transaction::output loop");
         ensure!(output.value > 0, "Output values must be greater than zero");
         // ensure no duplicate utxos
         let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), output_index));
@@ -214,6 +223,7 @@ fn update_storage(transaction: &Transaction) -> DispatchResult {
         let key = BlakeTwo256::hash_of(&(&transaction.encode(), output_index));
         output_index = output_index.checked_add(1).ok_or("output index overflow")?;
         sp_io::storage::set(&key.encode(), &output.encode());
+        info!(target: "frameless", "🖼️ Storing UTXO {:?} at key {:?}", output, key);
     }
 
     Ok(())

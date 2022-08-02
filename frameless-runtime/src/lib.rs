@@ -30,7 +30,7 @@ use sp_storage::well_known_keys;
 #[cfg(any(feature = "std", test))]
 use sp_runtime::{BuildStorage, Storage};
 
-use sp_core::{OpaqueMetadata, H256, H512};
+use sp_core::{OpaqueMetadata, H256, H512, hexdisplay::HexDisplay};
 
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
@@ -150,19 +150,13 @@ pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
 /// Block type as expected by this runtime.
 pub type Block = generic::Block<Header, BasicExtrinsic>;
 
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize, parity_util_mem::MallocSizeOf))]
-#[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
-pub struct Calls {
-	tx: utxo::Transaction,
-}
-
 // this extrinsic type does nothing other than fulfill the compiler.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize, parity_util_mem::MallocSizeOf))]
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
-pub struct BasicExtrinsic(Calls);
+pub struct BasicExtrinsic(utxo::Transaction);
 
 impl Extrinsic for BasicExtrinsic {
-	type Call = Calls;
+	type Call = utxo::Transaction;
 	type SignaturePayload = ();
 
 	fn new(data: Self::Call, _: Option<Self::SignaturePayload>) -> Option<Self> {
@@ -182,11 +176,9 @@ impl_runtime_apis! {
 			VERSION
 		}
 
-		// state root check
-		// todo!("How to do a state_root check??");
-
 		fn execute_block(block: Block) {
 			info!(target: "frameless", "🖼️ Entering execute_block. block: {:?}", block);
+			// state root check
 			//header.state_root = sp_core::H256::decode(&mut &raw_state_root[..]).unwrap();
 			//check equal to block.header.state_root
 			Self::initialize_block(&block.header);
@@ -209,11 +201,10 @@ impl_runtime_apis! {
 		fn apply_extrinsic(extrinsic: <Block as BlockT>::Extrinsic) -> ApplyExtrinsicResult {
 			info!(target: "frameless", "🖼️ Entering apply_extrinsic: {:?}", extrinsic);
 
-			let call = extrinsic.0;
-			let transaction = call.tx;
+			let transaction = extrinsic.0;
 			// Call spend
 			match utxo::spend(transaction) {
-				Err(e) => {
+				Err(_) => {
 					Err(TransactionValidityError::Invalid(InvalidTransaction::Custom(1)))
 				},
 				Ok(_) => {
@@ -234,6 +225,7 @@ impl_runtime_apis! {
 			let raw_state_root = &sp_io::storage::root(sp_storage::StateVersion::default())[..];
 
 			header.state_root = sp_core::H256::decode(&mut &raw_state_root[..]).unwrap();
+			//Log header here like in initialize block
 			header
 		}
 
@@ -261,10 +253,15 @@ impl_runtime_apis! {
 		) -> TransactionValidity {
 			info!(target: "frameless", "🖼️ Entering validate_transaction. source: {:?}, tx: {:?}, block hash: {:?}", source, tx, block_hash);
 
-			// we don't know how to validate this -- It should be fine??
-			// todo!("Implement validation of a UTXO transaction here.. I think.");
-			let data = tx.0;
-			Ok(ValidTransaction { provides: vec![data.encode()], ..Default::default() })
+			match utxo::validate_transaction(&tx.0) {
+				Ok(mut valid) => {
+					valid.provides = vec![tx.0.encode()];
+					Ok(valid)
+				},
+				Err(_) => {
+					Err(TransactionValidityError::Invalid(InvalidTransaction::Custom(1)))
+				},
+			}
 		}
 	}
 
@@ -385,7 +382,6 @@ mod tests {
 		let mut ext = sp_io::TestExternalities::from(t);
 		ext.register_extension(KeystoreExt(Arc::new(keystore)));
 		// Todo Ask Joshy is this necessary? How to do in frameless?
-		// ext.execute_with(|| System::set_block_number(1));
 		ext
 	}
 
@@ -433,11 +429,18 @@ mod tests {
 				.unwrap();
 
 			transaction.inputs[0].sigscript = H512::from(signature);
-			println!("Bytes Scale Encoded:: {:x?}", &transaction.encode());
+
+			let extrinsic = BasicExtrinsic(transaction.clone());
+			println!("Extrinsic Scale encoded hex::{}", HexDisplay::from(&extrinsic.encode()));
+			// let call = BasicExtrinsic(Calls { tx: transaction.clone() });
+			// println!("Call Scale encoded hex::{}", HexDisplay::from(&call.encode()));
+
 			let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), 0 as u64));
+			println!("New_utxo_key::{}", HexDisplay::from(&new_utxo_hash_key.encode()));
 			assert_ok!(utxo::spend(transaction));
 			assert!(!sp_io::storage::exists(&H256::from(GENESIS_UTXO).encode()));
 			assert!(sp_io::storage::exists(&new_utxo_hash_key.encode()));
+
 			let mut new_utxo =
 					sp_io::storage::get(&new_utxo_hash_key.encode()).unwrap();
 			assert_eq!(utxo::TransactionOutput::decode(&mut &new_utxo[..]).unwrap().value, 25);
@@ -475,4 +478,3 @@ mod tests {
 		})
 	}
 }
-// 479eabcbd5ef6e958c6a7851b36da7691c19bda1835a8f875aa28691180999ec4b9b126f8c6b8edcb39d03872d1834ea7602b15fffad0f467d5b0d2c9bf76ff4bc7e09df6828f5b8f42286f3bed67d0b7f4e47973ed3f67829feb7e42d82419000000000000000d2bf4b844dfefd6772a8843e669f94348966a977e3ae2af1dd78ef55f4df67
