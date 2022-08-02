@@ -107,10 +107,10 @@ pub struct TransactionOutput {
 /// Execute transaction
 /// Check transaction validity
 /// Update the storage
-pub fn spend(transaction: Transaction) -> DispatchResult {
-    info!(target: "frameless", "🖼️ Got into Spend");
+pub fn spend(mut transaction: Transaction) -> DispatchResult {
+    info!(target: "frameless", "🖼️ Spending {:?}", &transaction);
     let tx_validity = validate_transaction(&transaction)?;
-    update_storage(&transaction)?;
+    update_storage(&mut transaction)?;
     Ok(())
 }
 
@@ -125,7 +125,7 @@ pub fn spend(transaction: Transaction) -> DispatchResult {
 /// verify signatures
 /// outputs cannot be exploited
 pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransaction, &'static str> {
-    info!(target: "frameless", "🖼️ Got into validate_transaction");
+    // info!(target: "frameless", "🖼️ Got into validate_transaction");
     ensure!(!transaction.inputs.is_empty(), "No inputs");
     ensure!(!transaction.outputs.is_empty(), "No outputs");
 
@@ -136,6 +136,7 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
     }
     {
         // Check for uniqueness once. Afterwards dont need output_set.
+        // TODO: Is this necessary?
         let output_set: BTreeSet<_> = transaction.outputs.iter().collect();
         ensure!(output_set.len() == transaction.outputs.len(), "Outputs not unique");
     }
@@ -147,7 +148,6 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
     for input in transaction.inputs.iter() {
         match sp_io::storage::get(&input.outpoint.encode()) {
             Some(utxo_bytes) => {
-                info!(target: "frameless", "🖼️ Got into validate_transaction::Some");
                 let utxo =
                     TransactionOutput::decode(&mut &utxo_bytes[..])
                     .expect("Should never happen; QED");
@@ -165,7 +165,6 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
                     .ok_or("input value overflow")?;
             },
             None => {
-                info!(target: "frameless", "🖼️ Got into validate_transaction::None");
                 // To keep it simple we want to fail here. No handling for races.
                 return Err("No existing UTXO for this specified outpoint, Invalid Input");
             }
@@ -177,7 +176,6 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
     let mut output_index: u64 = 0;
     // Verify outputs
     for output in transaction.outputs.iter() {
-        info!(target: "frameless", "🖼️ Got into validate_transaction::output loop");
         ensure!(output.value > 0, "Output values must be greater than zero");
         // ensure no duplicate utxos
         let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), output_index));
@@ -186,7 +184,13 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
             !sp_io::storage::exists(&new_utxo_hash_key.encode()),
             "output utxo already exists"
         );
-        total_output = total_output.checked_add(output.value).ok_or("output value overflow")?;
+        total_output = total_output
+            .checked_add(output.value)
+            .ok_or("output value overflow")?;
+    }
+
+    if total_output > total_input {
+        return Err("Total outputs cannot exceed total inputs");
     }
 
     Ok(ValidTransaction {
@@ -199,7 +203,7 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
 /// Strip inputs of a transaction of their signature field
 /// Replace signature field with H512 all zeros
 /// @return: scale encoded tx
-fn get_stripped_transaction(transaction: &Transaction) -> Vec<u8> {
+pub fn get_stripped_transaction(transaction: &Transaction) -> Vec<u8> {
     let mut tx = transaction.clone();
     for input in tx.inputs.iter_mut() {
         input.sigscript = H512::zero();
@@ -208,11 +212,13 @@ fn get_stripped_transaction(transaction: &Transaction) -> Vec<u8> {
 }
 
 /// Make changes to storage
-/// A key in storage is a hash of a transaction +
+/// A key in storage is a hash of a transaction with no input signatures +
 /// its order in the TransactionOutput Vec in Order to avoid duplications.
-fn update_storage(transaction: &Transaction) -> DispatchResult {
-    /// Remove UTXOS which were spent
-    for input in transaction.inputs.iter() {
+fn update_storage(transaction: &mut Transaction) -> DispatchResult {
+    /// Remove UTXOS which were spent && strip signatures from inputs
+    /// To prep for storing deterministic keys.
+    for input in transaction.inputs.iter_mut() {
+        input.sigscript = H512::zero();
         sp_io::storage::clear(&input.outpoint.encode());
     }
 

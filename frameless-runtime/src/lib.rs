@@ -366,7 +366,8 @@ mod tests {
 	fn new_test_ext() -> sp_io::TestExternalities {
 
 		let keystore = KeyStore::new(); // a key storage to store new key pairs during testing
-		let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+		let alice_pub_key =
+			keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
 
 		let mut t = GenesisConfig::default()
 			.build_storage()
@@ -387,7 +388,8 @@ mod tests {
 	fn utxo_frameless_genesis_test() {
 		new_test_ext().execute_with(|| {
 			let keystore = KeyStore::new();
-			let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+			let alice_pub_key =
+				keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
 			let mut utxo_output = utxo::TransactionOutput {
 				value: 100,
 				pubkey: H256::from(alice_pub_key),
@@ -405,7 +407,8 @@ mod tests {
 	fn utxo_frameless_spend_transaction() {
 		new_test_ext().execute_with(|| {
 			let keystore = KeyStore::new();
-			let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+			let alice_pub_key =
+				keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
 
 			let mut transaction = utxo::Transaction {
 				inputs: vec![
@@ -430,8 +433,11 @@ mod tests {
 
 			let extrinsic = BasicExtrinsic(transaction.clone());
 			println!("Extrinsic Scale encoded hex::{}", HexDisplay::from(&extrinsic.encode()));
+			// const DECODED_THING: [u8; 48] = hex!("19000000000000000000000000000000d2bf4b844dfefd6772a8843e669f943408966a977e3ae2af1dd78e0f55f4df67");
+			// println!("What was gotten from storage::{:?}", utxo::TransactionOutput::decode(&mut &DECODED_THING[..]).unwrap());
 
-			let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), 0 as u64));
+			let stripped_transaction = utxo::get_stripped_transaction(&mut transaction);
+			let new_utxo_hash_key = BlakeTwo256::hash_of(&(&stripped_transaction, 0 as u64));
 			println!("New_utxo_key::{}", HexDisplay::from(&new_utxo_hash_key.encode()));
 			assert_ok!(utxo::spend(transaction));
 			assert!(!sp_io::storage::exists(&H256::from(GENESIS_UTXO).encode()));
@@ -448,7 +454,8 @@ mod tests {
 	fn utxo_frameless_create_outputs_from_no_existing_utxo_fails() {
 		new_test_ext().execute_with(|| {
 			let keystore = KeyStore::new();
-			let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+			let alice_pub_key =
+				keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
 
 			let mut transaction = utxo::Transaction {
 				inputs: vec![ utxo::TransactionInput {
@@ -475,17 +482,18 @@ mod tests {
 	}
 
 	#[test]
-	fn utxo_frameless_double_spend_same_utxo() {
+	fn utxo_frameless_double_spend_same_utxo_fails() {
 		new_test_ext().execute_with(|| {
 			let keystore = KeyStore::new();
-			let alice_pub_key = keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+			let alice_pub_key =
+				keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
 
 			let mut transaction = utxo::Transaction {
 				inputs: vec![
 					utxo::TransactionInput {
 						outpoint: H256::from(GENESIS_UTXO),
 						sigscript: H512::zero()
-				},
+					},
 					utxo::TransactionInput {
 						outpoint: H256::from(GENESIS_UTXO),
 						sigscript: H512::zero()
@@ -510,4 +518,116 @@ mod tests {
 			);
 		})
 	}
+
+	#[test]
+	fn utxo_frameless_zero_value_outputs_adding_bloat_fails() {
+		new_test_ext().execute_with(|| {
+			let keystore = KeyStore::new();
+			let alice_pub_key =
+				keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+
+			let mut transaction = utxo::Transaction {
+				inputs: vec![
+					utxo::TransactionInput {
+						outpoint: H256::from(GENESIS_UTXO),
+						sigscript: H512::zero(),
+				}],
+				outputs: vec![
+					utxo::TransactionOutput {
+						value: 0,
+						pubkey: H256::from(alice_pub_key)
+					}],
+			};
+
+			let signature =
+				sp_io::crypto::sr25519_sign(SR25519, &alice_pub_key, &transaction.encode())
+				.unwrap();
+			transaction.inputs[0].sigscript = H512::from(signature);
+			let spend_result = utxo::spend(transaction).err().unwrap();
+			assert_eq!(
+				spend_result,
+				sp_runtime::DispatchError::Other("Output values must be greater than zero")
+			);
+		})
+	}
+
+	#[test]
+	fn utxo_frameless_outputs_greater_than_inputs_fails() {
+		new_test_ext().execute_with(|| {
+			let keystore = KeyStore::new();
+			let alice_pub_key =
+				keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+
+			let mut transaction = utxo::Transaction {
+				inputs: vec![
+					utxo::TransactionInput {
+						outpoint: H256::from(GENESIS_UTXO),
+						sigscript: H512::zero(),
+					}],
+				outputs: vec![
+					utxo::TransactionOutput {
+						value: 25,
+						pubkey: H256::from(alice_pub_key),
+					},
+					utxo::TransactionOutput {
+						value: 76,
+						pubkey: H256::from(alice_pub_key),
+					}],
+			};
+
+			let signature =
+				sp_io::crypto::sr25519_sign(SR25519, &alice_pub_key, &transaction.encode())
+				.unwrap();
+			transaction.inputs[0].sigscript = H512::from(signature);
+			let spend_result = utxo::spend(transaction).err().unwrap();
+			assert_eq!(
+				spend_result,
+				sp_runtime::DispatchError::Other("Total outputs cannot exceed total inputs")
+			);
+		})
+	}
+
+	#[test]
+	fn utxo_frameless_overflow_output_value_fails() {
+		new_test_ext().execute_with(|| {
+			let keystore = KeyStore::new();
+			let alice_pub_key =
+				keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+
+				let mut transaction = utxo::Transaction {
+					inputs: vec![
+						utxo::TransactionInput {
+							outpoint: H256::from(GENESIS_UTXO),
+							sigscript: H512::zero(),
+						}],
+					outputs: vec![
+						utxo::TransactionOutput {
+							value: 2 as utxo::Value,
+							pubkey: H256::from(alice_pub_key),
+						},
+						utxo::TransactionOutput {
+							value: utxo::Value::max_value(),
+							pubkey: H256::from(alice_pub_key),
+						}],
+				};
+
+				let signature =
+					sp_io::crypto::sr25519_sign(SR25519, &alice_pub_key, &transaction.encode())
+					.unwrap();
+				transaction.inputs[0].sigscript = H512::from(signature);
+				let spend_result = utxo::spend(transaction).err().unwrap();
+				assert_eq!(
+					spend_result,
+					sp_runtime::DispatchError::Other("output value overflow"),
+				);
+		})
+	}
+
+	#[test]
+	fn utxo_frameless_overflow_input_value() {
+		new_test_ext().execute_with(|| {
+			// TODO: Create Genesis UTXO with max_value to overflow input
+		})
+	}
+
 }
