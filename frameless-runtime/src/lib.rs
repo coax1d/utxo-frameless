@@ -358,14 +358,14 @@ mod tests {
 
 	const ALICE_PHRASE: &str = "news slush supreme milk chapter athlete soap sausage put clutch what kitten";
 	// other random account generated with subkey
-	const KARL_PHRASE: &str = "monitor exhibit resource stumble subject nut valid furnace obscure misery satoshi assume";
 	const GENESIS_UTXO: [u8; 32] = hex!("79eabcbd5ef6e958c6a7851b36da07691c19bda1835a08f875aa286911800999");
+	const GENESIS_UTXO_BIG: [u8; 32] = hex!("6540745c3083cdedfa78e14efb46b8fab9ab89c6772f49da16b636aaf628d65a");
 
 	// This function basically just builds a genesis storage key/value store according to our desired mockup.
 	// We start each test by giving Alice 100 utxo to start with.
 	fn new_test_ext() -> sp_io::TestExternalities {
 
-		let keystore = KeyStore::new(); // a key storage to store new key pairs during testing
+		let keystore = KeyStore::new();
 		let alice_pub_key =
 			keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
 
@@ -374,7 +374,18 @@ mod tests {
 			.expect("Frameless system builds valid default genesis config");
 
 		BuildStorage::assimilate_storage(
-			&super::GenesisConfig::default(),
+			&super::GenesisConfig {
+				genesis_utxos: vec![
+					utxo::TransactionOutput {
+						value: utxo::Value::max_value(),
+						pubkey: H256::from(alice_pub_key),
+					},
+					utxo::TransactionOutput {
+						value: 100,
+						pubkey: H256::from(alice_pub_key)
+					},
+				],
+			},
 			&mut t
 		)
 		.expect("UTXO Pallet storage can be assimilated");
@@ -433,8 +444,6 @@ mod tests {
 
 			let extrinsic = BasicExtrinsic(transaction.clone());
 			println!("Extrinsic Scale encoded hex::{}", HexDisplay::from(&extrinsic.encode()));
-			// const DECODED_THING: [u8; 48] = hex!("19000000000000000000000000000000d2bf4b844dfefd6772a8843e669f943408966a977e3ae2af1dd78e0f55f4df67");
-			// println!("What was gotten from storage::{:?}", utxo::TransactionOutput::decode(&mut &DECODED_THING[..]).unwrap());
 
 			let stripped_transaction = utxo::get_stripped_transaction(&mut transaction);
 			let new_utxo_hash_key = BlakeTwo256::hash_of(&(&stripped_transaction, 0 as u64));
@@ -624,9 +633,43 @@ mod tests {
 	}
 
 	#[test]
-	fn utxo_frameless_overflow_input_value() {
+	fn utxo_frameless_overflow_input_value_fails() {
 		new_test_ext().execute_with(|| {
-			// TODO: Create Genesis UTXO with max_value to overflow input
+			let keystore = KeyStore::new();
+			let alice_pub_key =
+				keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
+
+			let mut transaction = utxo::Transaction {
+				inputs: vec![
+					utxo::TransactionInput {
+						outpoint: H256::from(GENESIS_UTXO_BIG),
+						sigscript: H512::zero(),
+					},
+					utxo::TransactionInput {
+						outpoint: H256::from(GENESIS_UTXO),
+						sigscript: H512::zero(),
+					}],
+				outputs: vec![
+					utxo::TransactionOutput {
+						value: 50,
+						pubkey: H256::from(alice_pub_key),
+					}
+				],
+			};
+
+			let signature =
+				sp_io::crypto::sr25519_sign(SR25519, &alice_pub_key, &transaction.encode())
+				.unwrap();
+
+			for input in transaction.inputs.iter_mut() {
+				input.sigscript = H512::from(signature.clone());
+			}
+
+			let spend_result = utxo::spend(transaction).err().unwrap();
+			assert_eq!(
+				spend_result,
+				sp_runtime::DispatchError::Other("input value overflow")
+			);
 		})
 	}
 
