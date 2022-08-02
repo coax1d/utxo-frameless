@@ -403,8 +403,6 @@ mod tests {
 				pubkey: H256::from(alice_pub_key),
 			};
 
-			println!("THING_TO_DECODE:{:?}", utxo::TransactionOutput::decode(&mut &THING_TO_DECODE[..]));
-
 			let val_retrieved = sp_io::storage::get(&GENESIS_UTXO).unwrap();
 			assert_eq!(
 				utxo::TransactionOutput::decode(&mut &val_retrieved[..]).unwrap(),
@@ -441,13 +439,9 @@ mod tests {
 
 			transaction.inputs[0].sigscript = H512::from(signature);
 
-			let extrinsic = BasicExtrinsic(transaction.clone());
-			println!("Extrinsic Scale encoded hex::{}", HexDisplay::from(&extrinsic.encode()));
-
 			let stripped_transaction_bytes = utxo::get_stripped_transaction(&mut transaction);
 			let new_utxo_hash_key =
 				BlakeTwo256::hash_of(&(&stripped_transaction_bytes, 0 as u64));
-			println!("New_utxo_key::{}", HexDisplay::from(&new_utxo_hash_key.encode()));
 			assert_ok!(utxo::spend(transaction));
 			assert!(!sp_io::storage::exists(&H256::from(GENESIS_UTXO).encode()));
 			assert!(sp_io::storage::exists(&new_utxo_hash_key.encode()));

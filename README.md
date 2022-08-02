@@ -15,6 +15,11 @@ cargo build --release
 ```
 ## Demo
 
+### Start node
+```sh
+./target/release/utxo-node --dev --tmp
+```
+
 ### Alice key information
 Alice_Pub_Key:
 0xd2bf4b844dfefd6772a8843e669f943408966a977e3ae2af1dd78e0f55f4df67
