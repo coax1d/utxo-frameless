@@ -3,16 +3,14 @@ use scale_info::TypeInfo;
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
 use sp_core::{
-	crypto::ByteArray,
 	H256,
 	H512,
 	sr25519::{Public, Signature},
 };
-use sp_std::collections::btree_map::BTreeMap;
 use sp_std::collections::btree_set::BTreeSet;
 use sp_std::prelude::*;
 use sp_runtime::{
-	traits::{BlakeTwo256, Hash, SaturatedConversion},
+	traits::{BlakeTwo256, Hash},
 	transaction_validity::{TransactionLongevity, ValidTransaction},
 };
 
@@ -39,18 +37,6 @@ macro_rules! ensure {
 			fail!($y);
 		}
 	}};
-}
-
-#[macro_export]
-macro_rules! assert_noop {
-	(
-		$x:expr,
-		$y:expr $(,)?
-	) => {
-		let h = $crate::storage_root($crate::StateVersion::V1);
-		$crate::assert_err!($x, $y);
-		assert_eq!(h, $crate::storage_root($crate::StateVersion::V1));
-	};
 }
 
 #[macro_export]
@@ -103,13 +89,12 @@ pub struct TransactionOutput {
 	pub pubkey: H256,
 }
 
-// How to add weight here for charging a fee.
 /// Execute transaction
 /// Check transaction validity
 /// Update the storage
 pub fn spend(mut transaction: Transaction) -> DispatchResult {
     info!(target: "frameless", "🖼️ Spending {:?}", &transaction);
-    let tx_validity = validate_transaction(&transaction)?;
+    validate_transaction(&transaction)?;
     update_storage(&mut transaction)?;
     Ok(())
 }
@@ -125,7 +110,6 @@ pub fn spend(mut transaction: Transaction) -> DispatchResult {
 /// verify signatures
 /// outputs cannot be exploited
 pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransaction, &'static str> {
-    // info!(target: "frameless", "🖼️ Got into validate_transaction");
     ensure!(!transaction.inputs.is_empty(), "No inputs");
     ensure!(!transaction.outputs.is_empty(), "No outputs");
 
@@ -136,7 +120,6 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
     }
     {
         // Check for uniqueness once. Afterwards dont need output_set.
-        // TODO: Is this necessary?
         let output_set: BTreeSet<_> = transaction.outputs.iter().collect();
         ensure!(output_set.len() == transaction.outputs.len(), "Outputs not unique");
     }
@@ -177,7 +160,7 @@ pub fn validate_transaction(transaction: &Transaction) -> Result<ValidTransactio
     // Verify outputs
     for output in transaction.outputs.iter() {
         ensure!(output.value > 0, "Output values must be greater than zero");
-        // ensure no duplicate utxos
+        // ensure no duplicate utxo keys in the database.
         let new_utxo_hash_key = BlakeTwo256::hash_of(&(&transaction.encode(), output_index));
         output_index = output_index.checked_add(1).ok_or("output index overflow")?;
         ensure!(
@@ -215,8 +198,8 @@ pub fn get_stripped_transaction(transaction: &Transaction) -> Vec<u8> {
 /// A key in storage is a hash of a transaction with no input signatures +
 /// its order in the TransactionOutput Vec in Order to avoid duplications.
 fn update_storage(transaction: &mut Transaction) -> DispatchResult {
-    /// Remove UTXOS which were spent && strip signatures from inputs
-    /// To prep for storing deterministic keys.
+    // Remove UTXOS which were spent && strip signatures from inputs
+    // To prep for storing deterministic keys.
     for input in transaction.inputs.iter_mut() {
         input.sigscript = H512::zero();
         sp_io::storage::clear(&input.outpoint.encode());

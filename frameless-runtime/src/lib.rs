@@ -17,7 +17,6 @@ use sp_runtime::{
 	transaction_validity::{
 		TransactionSource,
 		TransactionValidity,
-		ValidTransaction,
 		InvalidTransaction,
 		TransactionValidityError
 	},
@@ -30,7 +29,7 @@ use sp_storage::well_known_keys;
 #[cfg(any(feature = "std", test))]
 use sp_runtime::{BuildStorage, Storage};
 
-use sp_core::{OpaqueMetadata, H256, H512, hexdisplay::HexDisplay};
+use sp_core::{OpaqueMetadata, H256};
 
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
@@ -44,14 +43,14 @@ curl http://localhost:9933 -H "Content-Type:application/json;charset=utf-8" -d  
 	"jsonrpc":"2.0",
 	"id":1,
 	"method":"author_submitExtrinsic",
-	"params": ["0x"]
+	"params": ["0x"] // Transaction scale encoded, i.e. BasicExtrinsic(transaction).encode();
 }'
 
 curl http://localhost:9933 -H "Content-Type:application/json;charset=utf-8" -d   '{
 	"jsonrpc":"2.0",
 	"id":1,
 	"method":"state_getStorage",
-	"params": ["0x626F6F6C65616E"]
+	"params": ["0x"] // Key in the database Scale encoded
 }'
 */
 
@@ -63,7 +62,6 @@ pub type BlockNumber = u32;
 /// of data like extrinsics, allowing for them to continue syncing the network through upgrades
 /// to even the core datas-tructures.
 pub mod opaque {
-	use sp_runtime::OpaqueExtrinsic;
 
 	use super::*;
 
@@ -348,8 +346,7 @@ impl_runtime_apis! {
 mod tests {
 	use super::*;
 
-	use sp_runtime::{testing::Header, traits::IdentityLookup, Perbill};
-	use sp_core::testing::SR25519;
+	use sp_core::{H512, hexdisplay::HexDisplay, testing::SR25519};
 	use sp_keystore::testing::KeyStore;
 	use sp_keystore::{KeystoreExt, SyncCryptoStore};
 	use hex_literal::hex;
@@ -401,12 +398,14 @@ mod tests {
 			let keystore = KeyStore::new();
 			let alice_pub_key =
 				keystore.sr25519_generate_new(SR25519, Some(ALICE_PHRASE)).unwrap();
-			let mut utxo_output = utxo::TransactionOutput {
+			let utxo_output = utxo::TransactionOutput {
 				value: 100,
 				pubkey: H256::from(alice_pub_key),
 			};
 
-			let mut val_retrieved = sp_io::storage::get(&GENESIS_UTXO).unwrap();
+			println!("THING_TO_DECODE:{:?}", utxo::TransactionOutput::decode(&mut &THING_TO_DECODE[..]));
+
+			let val_retrieved = sp_io::storage::get(&GENESIS_UTXO).unwrap();
 			assert_eq!(
 				utxo::TransactionOutput::decode(&mut &val_retrieved[..]).unwrap(),
 				utxo_output
@@ -445,14 +444,15 @@ mod tests {
 			let extrinsic = BasicExtrinsic(transaction.clone());
 			println!("Extrinsic Scale encoded hex::{}", HexDisplay::from(&extrinsic.encode()));
 
-			let stripped_transaction = utxo::get_stripped_transaction(&mut transaction);
-			let new_utxo_hash_key = BlakeTwo256::hash_of(&(&stripped_transaction, 0 as u64));
+			let stripped_transaction_bytes = utxo::get_stripped_transaction(&mut transaction);
+			let new_utxo_hash_key =
+				BlakeTwo256::hash_of(&(&stripped_transaction_bytes, 0 as u64));
 			println!("New_utxo_key::{}", HexDisplay::from(&new_utxo_hash_key.encode()));
 			assert_ok!(utxo::spend(transaction));
 			assert!(!sp_io::storage::exists(&H256::from(GENESIS_UTXO).encode()));
 			assert!(sp_io::storage::exists(&new_utxo_hash_key.encode()));
 
-			let mut new_utxo =
+			let new_utxo =
 					sp_io::storage::get(&new_utxo_hash_key.encode()).unwrap();
 			assert_eq!(utxo::TransactionOutput::decode(&mut &new_utxo[..]).unwrap().value, 25);
 			assert_eq!(utxo::TransactionOutput::decode(&mut &new_utxo[..]).unwrap().pubkey, H256::from(alice_pub_key));

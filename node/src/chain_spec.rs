@@ -1,6 +1,5 @@
 use utxo_frameless_runtime::GenesisConfig as FramelessGenesisConfig;
-use sc_service::ChainType;
-use sp_core::{Pair, Public, sr25519, H256, ByteArray};
+use sp_core::H256;
 use hex_literal::hex;
 
 // The URL for the telemetry server.
