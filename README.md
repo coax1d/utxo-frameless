@@ -1,4 +1,4 @@
-# Frameless UTXO PoS Blockchain 
+# Frameless UTXO Blockchain 
 
 ### Mentions
 Inspired by @JoshOrndorff & @nczhu
