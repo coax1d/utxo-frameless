@@ -176,20 +176,23 @@ impl_runtime_apis! {
 
 		fn execute_block(block: Block) {
 			info!(target: "frameless", "🖼️ Entering execute_block. block: {:?}", block);
-			// state root check
-			//header.state_root = sp_core::H256::decode(&mut &raw_state_root[..]).unwrap();
-			//check equal to block.header.state_root
-			Self::initialize_block(&block.header);
 
 			for extrinsic in block.extrinsics {
-				Self::apply_extrinsic(extrinsic);
+				match Self::apply_extrinsic(extrinsic) {
+					Ok(_) => {},
+					Err(e) => info!(target: "frameless", "🖼️ Error executing extrinsic {:?}", e)
+				}
 			}
 
-			Self::finalize_block();
+			// Verify Stateroot
+			let mut raw_state_root = &sp_io::storage::root(sp_storage::StateVersion::default())[..];
+			let state_root = H256::decode(&mut raw_state_root)
+				.expect("Should always beable to calculate a valid stateroot; QED");
+			assert_eq!(block.header.state_root, state_root);
 		}
 
 		fn initialize_block(header: &<Block as BlockT>::Header) {
-			info!(target: "frameless", "🖼️ Entering initialize_block. header: {:?}", header);
+			info!(target: "frameless", "🖼️ Entering initialize_block.");
 			sp_io::storage::set(&HEADER_KEY, &header.encode());
 		}
 	}
@@ -214,10 +217,12 @@ impl_runtime_apis! {
 		fn finalize_block() -> <Block as BlockT>::Header {
 			info!(target: "frameless", "🖼️ Entering finalize block.");
 
+			// Clear old State root
 			let raw_header = sp_io::storage::get(&HEADER_KEY)
 				.expect("We initialized with header, it never got mutated, qed");
 			sp_io::storage::clear(&HEADER_KEY);
 
+			// Create new header and add new state_root
 			let mut header = <Block as BlockT>::Header::decode(&mut &*raw_header)
 				.expect("we put a valid header in in the first place, qed");
 			let raw_state_root = &sp_io::storage::root(sp_storage::StateVersion::default())[..];
@@ -251,9 +256,10 @@ impl_runtime_apis! {
 		) -> TransactionValidity {
 			info!(target: "frameless", "🖼️ Entering validate_transaction. source: {:?}, tx: {:?}, block hash: {:?}", source, tx, block_hash);
 
-			match utxo::validate_transaction(&tx.0) {
+			let call = tx.0;
+			match utxo::validate_transaction(&call) {
 				Ok(mut valid) => {
-					valid.provides = vec![tx.0.encode()];
+					valid.provides = vec![call.encode()];
 					Ok(valid)
 				},
 				Err(_) => {
@@ -346,7 +352,7 @@ impl_runtime_apis! {
 mod tests {
 	use super::*;
 
-	use sp_core::{H512, hexdisplay::HexDisplay, testing::SR25519};
+	use sp_core::{H512, testing::SR25519};
 	use sp_keystore::testing::KeyStore;
 	use sp_keystore::{KeystoreExt, SyncCryptoStore};
 	use hex_literal::hex;
@@ -666,5 +672,90 @@ mod tests {
 			);
 		})
 	}
+
+
+    #[test]
+	fn validate_no_transaction_outputs_fails() {
+        let inputs = vec![
+            utxo::TransactionInput {
+                ..Default::default()
+            },
+            utxo::TransactionInput {
+                ..Default::default()
+            }
+        ];
+        let tx = utxo::Transaction {
+            inputs,
+            ..Default::default()
+        };
+
+		let res = utxo::validate_transaction(&tx).err().unwrap();
+        assert_eq!(res, "No outputs");
+	}
+
+    #[test]
+	fn utxo_frameless_validate_no_transaction_inputs_fails() {
+        let outputs = vec![
+            utxo::TransactionOutput {
+                ..Default::default()
+            },
+            utxo::TransactionOutput {
+                ..Default::default()
+            }
+        ];
+        let tx = utxo::Transaction {
+            outputs,
+            ..Default::default()
+        };
+
+		let res = utxo::validate_transaction(&tx).err().unwrap();
+        assert_eq!(res, "No inputs");
+	}
+
+    #[test]
+    fn utxo_frameless_validate_outputs_not_unique_fails() {
+        let outputs = vec![
+            utxo::TransactionOutput {
+                ..Default::default()
+            },
+            utxo::TransactionOutput {
+                ..Default::default()
+            }
+        ];
+        let inputs = vec![
+            utxo::TransactionInput {
+                ..Default::default()
+            }
+        ];
+        let tx = utxo::Transaction {
+            inputs,
+            outputs,
+        };
+        let res = utxo::validate_transaction(&tx).err().unwrap();
+        assert_eq!(res, "Outputs not unique");
+    }
+
+    #[test]
+    fn utxo_frameless_validate_inputs_not_unique_fails() {
+        let inputs = vec![
+            utxo::TransactionInput {
+                ..Default::default()
+            },
+            utxo::TransactionInput {
+                ..Default::default()
+            }
+        ];
+        let outputs = vec![
+            utxo::TransactionOutput {
+                ..Default::default()
+            }
+        ];
+        let tx = utxo::Transaction {
+            inputs,
+            outputs,
+        };
+        let res = utxo::validate_transaction(&tx).err().unwrap();
+        assert_eq!(res, "Inputs not unique");
+    }
 
 }
